@@ -16,6 +16,15 @@ export const useRecording = () => {
 
   const startRecording = useCallback(async () => {
     try {
+      // 先重置所有状态
+      setState((prev) => ({
+        ...prev,
+        isRecording: false,
+        isPaused: false,
+        duration: 0,
+        audioBlob: null,
+      }));
+
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
           channelCount: 1,
@@ -66,17 +75,19 @@ export const useRecording = () => {
         const wavBlob = await audioBufferToWav(audioBuffer);
         console.log('WAV 音频大小:', wavBlob.size, '类型:', wavBlob.type);
         
+        // 先停止所有音轨
+        stream.getTracks().forEach(track => track.stop());
+        if (timerRef.current) {
+          window.clearInterval(timerRef.current);
+        }
+
+        // 更新状态
         setState((prev) => ({
           ...prev,
           isRecording: false,
           isPaused: false,
           audioBlob: wavBlob,
         }));
-        
-        stream.getTracks().forEach(track => track.stop());
-        if (timerRef.current) {
-          window.clearInterval(timerRef.current);
-        }
       };
 
       mediaRecorder.start(1000); // 每秒收集一次数据
@@ -95,6 +106,13 @@ export const useRecording = () => {
       }));
     } catch (error) {
       console.error('录音失败:', error);
+      setState((prev) => ({
+        ...prev,
+        isRecording: false,
+        isPaused: false,
+        duration: 0,
+        audioBlob: null,
+      }));
     }
   }, []);
 
@@ -167,7 +185,53 @@ export const useRecording = () => {
 
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current && state.isRecording) {
-      mediaRecorderRef.current.stop();
+      return new Promise<Blob>((resolve) => {
+        const mediaRecorder = mediaRecorderRef.current!;
+        const originalOnStop = mediaRecorder.onstop;
+        mediaRecorder.onstop = async () => {
+          console.log('录音停止，开始处理音频数据');
+          const webmBlob = new Blob(chunksRef.current, { type: mediaRecorder.mimeType });
+          console.log('WebM 音频大小:', webmBlob.size, '类型:', webmBlob.type);
+          
+          // 将 webm 转换为 wav
+          const audioContext = new AudioContext();
+          const arrayBuffer = await webmBlob.arrayBuffer();
+          console.log('音频数据大小:', arrayBuffer.byteLength);
+          
+          const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+          console.log('解码后的音频信息:', {
+            duration: audioBuffer.duration,
+            numberOfChannels: audioBuffer.numberOfChannels,
+            sampleRate: audioBuffer.sampleRate,
+          });
+          
+          // 创建 WAV 文件
+          const wavBlob = await audioBufferToWav(audioBuffer);
+          console.log('WAV 音频大小:', wavBlob.size, '类型:', wavBlob.type);
+          
+          // 先停止所有音轨
+          mediaRecorder.stream.getTracks().forEach(track => track.stop());
+          if (timerRef.current) {
+            window.clearInterval(timerRef.current);
+          }
+
+          // 更新状态
+          setState((prev) => ({
+            ...prev,
+            isRecording: false,
+            isPaused: false,
+            audioBlob: wavBlob,
+          }));
+
+          // 调用原始的 onstop 处理函数（如果有的话）
+          if (originalOnStop) {
+            originalOnStop.call(mediaRecorder, new Event('stop'));
+          }
+
+          resolve(wavBlob);
+        };
+        mediaRecorder.stop();
+      });
     }
   }, [state.isRecording]);
 

@@ -20,13 +20,17 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
 
   const handleStopRecording = async () => {
-    stopRecording();
-    if (!audioBlob) return;
-
     setIsProcessing(true);
     setError(null);
 
     try {
+      // 停止录音并获取处理后的音频数据
+      const audioBlob = await stopRecording();
+      
+      if (!audioBlob) {
+        throw new Error('录音数据获取失败');
+      }
+
       // 转录音频
       const transcriptionResult = await transcribeAudio(audioBlob);
       if (!transcriptionResult.success || !transcriptionResult.data) {
